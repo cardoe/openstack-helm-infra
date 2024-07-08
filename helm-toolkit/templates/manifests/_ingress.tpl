@@ -623,17 +623,22 @@ examples:
 {{- $envAll := index . "envAll" -}}
 {{- $backendService := index . "backendService" | default "api" -}}
 {{- $backendServiceType := index . "backendServiceType" -}}
+{{- $backendServiceTypeUnderscore := index . "backendServiceType" | replace "-" "_" -}}
 {{- $backendPort := index . "backendPort" -}}
 {{- $endpoint := index . "endpoint" | default "public" -}}
 {{- $pathType := index . "pathType" | default "Prefix" -}}
-{{- $certIssuer := index . "certIssuer" | default "" -}}
+{{- $defaultHostFqdnOverride := index $envAll.Values "endpoints" $backendServiceTypeUnderscore "host_fqdn_override" "default" | merge (dict) }}
+{{- $hostFqdnOverride := index $envAll.Values "endpoints" $backendServiceTypeUnderscore "host_fqdn_override" $endpoint }}
+{{- $certIssuer := default ((($defaultHostFqdnOverride).tls).issuerRef).name ((($hostFqdnOverride).tls).issuerRef).name }}
+{{- $certDuration := default (($defaultHostFqdnOverride).tls).duration (($hostFqdnOverride).tls).duration }}
 {{- $ingressName := tuple $backendServiceType $endpoint $envAll | include "helm-toolkit.endpoints.hostname_short_endpoint_lookup" }}
 {{- $backendName := tuple $backendServiceType "internal" $envAll | include "helm-toolkit.endpoints.hostname_short_endpoint_lookup" }}
 {{- $hostName := tuple $backendServiceType $endpoint $envAll | include "helm-toolkit.endpoints.hostname_short_endpoint_lookup" }}
 {{- $hostNameFull := tuple $backendServiceType $endpoint $envAll | include "helm-toolkit.endpoints.hostname_fqdn_endpoint_lookup" }}
+{{- $certIssuerKind := coalesce ((($hostFqdnOverride).tls).issuerRef).kind ((($defaultHostFqdnOverride).tls).issuerRef).kind $envAll.Values.cert_issuer_type "ClusterIssuer" }}
 {{- $certIssuerType := "cluster-issuer" -}}
-{{- if $envAll.Values.cert_issuer_type }}
-{{- $certIssuerType = $envAll.Values.cert_issuer_type }}
+{{- if eq $certIssuerKind "Issuer" }}
+{{- $certIssuerType = "issuer" -}}
 {{- end }}
 ---
 apiVersion: networking.k8s.io/v1
@@ -644,9 +649,8 @@ metadata:
 {{- if $certIssuer }}
     cert-manager.io/{{ $certIssuerType }}: {{ $certIssuer }}
     certmanager.k8s.io/{{ $certIssuerType }}: {{ $certIssuer }}
-{{- $slice := index $envAll.Values.endpoints $backendServiceType "host_fqdn_override" "default" "tls" -}}
-{{- if (hasKey $slice "duration") }}
-    cert-manager.io/duration: {{ index $slice "duration" }}
+{{- if $certDuration }}
+    cert-manager.io/duration: {{ $certDuration }}
 {{- end }}
 {{- end }}
 {{ toYaml (index $envAll.Values.network $backendService "ingress" "annotations") | indent 4 }}
@@ -697,6 +701,12 @@ kind: Ingress
 metadata:
   name: {{ printf "%s-%s-%s" $ingressName $ingressController "fqdn" }}
   annotations:
+{{- if $certIssuer }}
+    cert-manager.io/{{ $certIssuerType }}: {{ $certIssuer }}
+{{- if $certDuration }}
+    cert-manager.io/duration: {{ $certDuration }}
+{{- end }}
+{{- end }}
 {{ toYaml (index $envAll.Values.network $backendService "ingress" "annotations") | indent 4 }}
 spec:
   ingressClassName: {{ index $envAll.Values.network $backendService "ingress" "classes" $ingressController | quote }}
